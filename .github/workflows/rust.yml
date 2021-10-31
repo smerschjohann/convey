@@ -1,22 +1,71 @@
-name: Rust
+# Instruction + template repo: https://github.com/FedericoPonzi/rust-ci
+# Replace rust-ci with your binary name.
+name: CI
 
 on:
-  push:
-    branches: [ master ]
   pull_request:
-    branches: [ master ]
-
-env:
-  CARGO_TERM_COLOR: always
+  push:
+    branches:
+      - master
+    tags:
+      - 'v*.*.*'
 
 jobs:
-  build:
-
+  # Publish latest and releases (e.g. tags with semver) on dockerhub.
+  docker-push-release-latest:
     runs-on: ubuntu-latest
-
+    if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/master'
     steps:
-    - uses: actions/checkout@v2
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose
+      - uses: actions/checkout@master
+      - name: Publish to Registry
+        uses: elgohr/Publish-Docker-Github-Action@master
+        with:
+          #UPDATEME: dockerhub repository name
+          name: federicoponzi/rust-ci
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+          tag_names: true
+  create-release:
+    name: deploy
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    strategy: 
+      matrix:
+        target: [ aarch64-unknown-linux-gnu, armv7-unknown-linux-gnueabihf, i686-unknown-linux-gnu, i686-unknown-linux-musl, mips-unknown-linux-gnu, mips64-unknown-linux-gnuabi64, mips64el-unknown-linux-gnuabi64, mipsel-unknown-linux-gnu, powerpc-unknown-linux-gnu, powerpc64-unknown-linux-gnu, powerpc64le-unknown-linux-gnu,           arm-unknown-linux-gnueabi          ,x86_64-unknown-linux-gnu           ,x86_64-unknown-linux-musl]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
+      - name: Install rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+          target: ${{ matrix.target }}
+
+      - name: Build target
+        uses: actions-rs/cargo@v1
+        with:
+          use-cross: true
+          command: build
+          args: --release --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          # TODO:
+          # strip target/${{ matrix.target }}/release/rust-ci
+          cd target/${{ matrix.target }}/release          
+          # UPDATEME: replace the string "rust-ci" with your binary's name.
+          tar czvf ../../../rust-ci-${{ matrix.target }}.tar.gz rust-ci
+          cd -
+          
+      - name: Publish
+        uses: softprops/action-gh-release@v1
+        # TODO: if any of the build step fails, the release should be deleted.
+        with:
+            # UPDATEME: Replace "rust-ci" with your binary name but keep the star (*).
+            files: 'rust-ci*'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
